@@ -44,6 +44,8 @@ class SolaredgeBat(AbstractBat):
         self.sim_counter = SimCounter(self.__device_id, self.component_config.id, prefix="speicher")
         self.store = get_bat_value_store(self.component_config.id)
         self.fault_state = FaultState(ComponentInfo.from_component_config(self.component_config))
+        self.bat_minsoc = 10  # Mindest-SoC zur Steuerung des Speichers, ggf. self.component_config.configuration.bat_minsoc oder so
+        self.last_mode = 'Unknown'
 
     def update(self) -> None:
         self.store.set(self.read_state())
@@ -98,25 +100,37 @@ class SolaredgeBat(AbstractBat):
 
     def set_power_limit(self, power_limit: Optional[int]) -> None:
         unit = self.component_config.configuration.modbus_id
-        power_limit_mode = read.mqtt.power_limit_mode
+        power_limit_mode = power_limit_mode  # Einlesen Variable aus MQTT Topic fehlt noch...
 
         if power_limit_mode == 'no_limit':
-            # Keine Steuerung nötig
+            # Keine Steuerung nötig, Modus Immer gewählt.
             return
-        
+
         registers_to_read = [
+            "Battery1StateOfEnergy",
             "StorageControlMode",
             "RemoteControlCommandMode",
             "RemoteControlCommandDischargeLimit",
         ]
         values = self._read_registers(registers_to_read, unit)
-        
+
+        if values["Battery1StateOfEnergy"] <= self.bat_minsoc:
+            # Keine Steuerunng, da Mindest-SoC unterschritten, ggf. externe Steuerung deaktivieren.
+            if values["StorageControlMode"] != 2:
+                log.debug(f"Mindest-SoC unterschritten, deaktiviere externe Steuerung.")
+                values_to_write = {
+                    "RemoteControlCommandDischargeLimit": 5000,
+                    "StorageControlMode": 2,
+                }
+                self._write_registers(values_to_write, unit)
+            return
+
         if power_limit is None and values["StorageControlMode"] == 2:
-            # Kein Powerlimit gefordert, externe Steuerung bereits inaktiv
+            # Kein Powerlimit gefordert, externe Steuerung bereits inaktiv.
             pass
 
         elif power_limit is None and values["StorageControlMode"] != 2:
-            # Kein Powerlimit gefordert, externe Steuerung aktiv, externe Steuerung deaktivieren
+            # Kein Powerlimit gefordert, externe Steuerung aktiv, externe Steuerung deaktivieren.
             log.debug(f"Keine Batteriesteuerung mehr gefordert, deaktiviere externe Steuerung.")
             values_to_write = {
                 "RemoteControlCommandDischargeLimit": 5000,
