@@ -45,7 +45,7 @@ class SolaredgeBat(AbstractBat):
         self.store = get_bat_value_store(self.component_config.id)
         self.fault_state = FaultState(ComponentInfo.from_component_config(self.component_config))
         self.last_mode = None
-        self.min_soc = 10
+        self.minsoc_storagecontrolmode = 10
 
         if battery_index == 2:
             BatteryInstantaneousPower = Battery2InstantaneousPower
@@ -62,61 +62,61 @@ class SolaredgeBat(AbstractBat):
 
         registers_to_read = [
             "BatteryInstantaneousPower",
-            "BatteryStateOfEnergy",
-        ]
+            "BatteryStateOfEnergy"]
         values = self._read_registers(registers_to_read, unit)
+        power = values["BatteryInstantaneousPower"]
+        soc = values["BatteryStateOfEnergy"]
 
-        if values["BatteryInstantaneousPower"] == FLOAT32_UNSUPPORTED:
-            values["BatteryInstantaneousPower"] = 0
+        if power == FLOAT32_UNSUPPORTED:
+            power = 0
 
-        imported, exported = self.sim_counter.sim_count(values["BatteryInstantaneousPower"])
+        imported, exported = self.sim_counter.sim_count(power)
 
         bat_state = BatState(
-            power=values["BatteryInstantaneousPower"],
-            soc=values["BatteryStateOfEnergy"],
+            power=power,
+            soc=soc,
             imported=imported,
-            exported=exported
-        )
+            exported=exported)
         log.debug(f"Bat {self.__tcp_client.address}: {bat_state}")
         return bat_state
 
     def set_power_limit(self, power_limit: Optional[int]) -> None:
         unit = self.component_config.configuration.modbus_id
-
-        # Prüfung, ob Mindest-SoC der Batterie erreicht ist.
-        registers_to_read = [
-            "BatteryStateOfEnergy",
-        ]
+        # Auf Mindest-SoC prüfen
+        registers_to_read = ["BatteryStateOfEnergy"]
         values = self._read_registers(registers_to_read, unit)
+        if values["BatteryStateOfEnergy"] <= self.minsoc_storagecontrolmode:
+            # Mindest-SoC des Speichers erreicht, keine Steuerung.
+            if self.last_mode != None:
+                # Steuerung aktiv, deaktivieren.
+                log.debug("Mindest-Soc erreicht, deaktiviere externe Steuerung.")
+                values_to_write = {
+                    "RemoteControlCommandDischargeLimit": 5000,
+                    "StorageChargeDischargeDefaultMode": 0,
+                    "RemoteControlCommandMode": 0,
+                    "StorageControlMode": 2}
+                self._write_registers(values_to_write, unit)
+                self.last_mode = None
+            else:
+                return
 
-
-        if values["BatteryStateOfEnergy"] <= self.min_soc:
-                # Mindest-SoC des Speichers erreicht, keine Steuerung
-        if power_limit is None and self.last_mode is None:
-            # Kein Powerlimit gefordert, externe Steuerung bereits inaktiv
-            return
-
-        elif power_limit is None or values["BatteryStateOfEnergy"] <= self.min_soc and self.last_mode != None:
-            # Kein Powerlimit gefordert oder Mindest-SoC erreicht, externe Steuerung aktiv, externe Steuerung deaktivieren, Standardwerte setzen.
-            log.debug(f"Keine Batteriesteuerung mehr gefordert, deaktiviere externe Steuerung.")
+        elif power_limit is None and self.last_mode != None:
+            # Kein Powerlimit mehr gefordert Steuerung deaktivieren.
+            log.debug("Keine Batteriesteuerung mehr gefordert, deaktiviere externe Steuerung.")
             values_to_write = {
                 "RemoteControlCommandDischargeLimit": 5000,
                 "StorageChargeDischargeDefaultMode": 0,
                 "RemoteControlCommandMode": 0,
-                "StorageControlMode": 2,
-            }
+                "StorageControlMode": 2}
             self._write_registers(values_to_write, unit)
             self.last_mode = None
 
         elif power_limit == 0 and self.last_mode != 'stop':
-
-            
             # externe Steuerung aktivieren, Speichermodus "Mit PV-Überschuss laden", Speicher wird nicht entladen.
             values_to_write = {
                 "StorageControlMode": 4,
                 "StorageChargeDischargeDefaultMode": 1,
-                "RemoteControlCommandMode": 1,
-            }
+                "RemoteControlCommandMode": 1}
             self._write_registers(values_to_write, unit)
             log.debug(f"Batteriesteuerung aktiviert. Modus 'Mit PV-Überschuss laden'.")
             self.last_mode = 'stop'
@@ -128,20 +128,14 @@ class SolaredgeBat(AbstractBat):
                 values_to_write = {
                     "StorageControlMode": 4,
                     "StorageChargeDischargeDefaultMode": 7,
-                    "RemoteControlCommandMode": 7,
-                }
+                    "RemoteControlCommandMode": 7}
                 self._write_registers(values_to_write, unit)
                 log.debug(f"Batteriesteuerung aktiviert. Modus 'Maximaler Eigenverbrauch'.")
                 self.last_mode = 'limited'
-
-            registers_to_read = [
-                "RemoteControlCommandDischargeLimit",
-            ]
+            registers_to_read = ["RemoteControlCommandDischargeLimit"]
             values = self._read_registers(registers_to_read, unit)
             if values["RemoteControlCommandDischargeLimit"] not in range (power_limit-10, power_limit+10):
-                values_to_write = {
-                    "RemoteControlCommandDischargeLimit": int(min(power_limit, 5000))
-                }
+                values_to_write = {"RemoteControlCommandDischargeLimit": int(min(power_limit, 5000))}
                 self._write_registers(values_to_write, unit)
                 log.debug(f"Powerlimit gesetzt {power_limit} W")
 
@@ -151,8 +145,9 @@ class SolaredgeBat(AbstractBat):
             log.debug(f"Bat raw values {self.__tcp_client.address}: {values}")
             address, data_type = self.REGISTERS[key]
             values[key] = self.__tcp_client.read_holding_registers(
-            address, data_type, wordorder=Endian.Little, unit=unit
-            )
+                address,
+                data_type,
+                wordorder=Endian.Little, unit=unit)
         log.debug(f"Bat raw values {self.__tcp_client.address}: {values}")
         return values
 
@@ -165,16 +160,14 @@ class SolaredgeBat(AbstractBat):
 
     def _encode_value(self, value: Union[int, float], data_type: ModbusDataType) -> list:
         builder = pymodbus.payload.BinaryPayloadBuilder(
-                byteorder=pymodbus.constants.Endian.Big,
-                wordorder=pymodbus.constants.Endian.Little
-            )
+            byteorder=pymodbus.constants.Endian.Big,
+            wordorder=pymodbus.constants.Endian.Little)
         encode_methods = {
             ModbusDataType.UINT_32: builder.add_32bit_uint,
             ModbusDataType.INT_32: builder.add_32bit_int,
             ModbusDataType.UINT_16: builder.add_16bit_uint,
             ModbusDataType.INT_16: builder.add_16bit_int,
-            ModbusDataType.FLOAT_32: builder.add_32bit_float,
-        }
+            ModbusDataType.FLOAT_32: builder.add_32bit_float}
 
         if data_type in encode_methods:
             encode_methods[data_type](int(value))
