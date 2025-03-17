@@ -4,7 +4,9 @@ from typing import Dict, Tuple, Union, Optional
 
 from pymodbus.constants import Endian
 
+from control import data
 from control.bat_all import BatAllData, Config
+from helpermodules.subdata import SubData
 
 from dataclass_utils import dataclass_from_dict
 from modules.common import modbus
@@ -81,9 +83,9 @@ class SolaredgeBat(AbstractBat):
 
     def set_power_limit(self, power_limit: Optional[int]) -> None:
         unit = self.component_config.configuration.modbus_id
-
-        power_limit_mode = BatAllData(config=Config(power_limit_mode))
-        log.debug(f"PowerLimitMode = {power_limit_mode}")
+        self.PowerLimitMode = data.data.bat_all_data.data.config.power_limit_mode
+        #PowerLimitMode = Subdata.bat_all_data.data.config.power_limit_mode
+        #power_limit_mode = BatAllData(config=Config(power_limit_mode))
 
         """
         # Auf Mindest-SoC prüfen
