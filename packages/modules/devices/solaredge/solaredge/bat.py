@@ -4,6 +4,8 @@ from typing import Dict, Tuple, Union, Optional
 
 from pymodbus.constants import Endian
 
+from control.bat_all import BatAllData, Config
+
 from dataclass_utils import dataclass_from_dict
 from modules.common import modbus
 from modules.common.abstract_device import AbstractBat
@@ -45,14 +47,8 @@ class SolaredgeBat(AbstractBat):
         self.store = get_bat_value_store(self.component_config.id)
         self.fault_state = FaultState(ComponentInfo.from_component_config(self.component_config))
         self.last_mode = None
-        self.minsoc_storagecontrolmode = 10
-
-        if battery_index == 2:
-            BatteryInstantaneousPower = Battery2InstantaneousPower
-            BatteryStateOfEnergy = Battery2StateOfEnergy
-        else:
-            BatteryInstantaneousPower = Battery1InstantaneousPower
-            BatteryStateOfEnergy = Battery1StateOfEnergy
+        battery_index = 1
+        minsoc_storagecontrolmode = 10
 
     def update(self) -> None:
         self.store.set(self.read_state())
@@ -61,15 +57,18 @@ class SolaredgeBat(AbstractBat):
         unit = self.component_config.configuration.modbus_id
 
         registers_to_read = [
-            "BatteryInstantaneousPower",
-            "BatteryStateOfEnergy"]
+            "Battery{battery_index}InstantaneousPower",
+            "Battery{battery_index}StateOfEnergy",
+            "StorageControlMode",
+            "RemoteControlCommandMode",
+            "RemoteControlCommandDischargeLimit"]
+        
         values = self._read_registers(registers_to_read, unit)
-        power = values["BatteryInstantaneousPower"]
-        soc = values["BatteryStateOfEnergy"]
 
+        power = values["Battery{battery_index}InstantaneousPower"]
         if power == FLOAT32_UNSUPPORTED:
             power = 0
-
+        soc = values["Battery{batery_index}StateOfEnergy"]
         imported, exported = self.sim_counter.sim_count(power)
 
         bat_state = BatState(
@@ -82,10 +81,15 @@ class SolaredgeBat(AbstractBat):
 
     def set_power_limit(self, power_limit: Optional[int]) -> None:
         unit = self.component_config.configuration.modbus_id
+
+        power_limit_mode = BatAllData(config=Config(power_limit_mode))
+        log.debug(f"PowerLimitMode = {power_limit_mode}")
+
+        """
         # Auf Mindest-SoC prüfen
-        registers_to_read = ["BatteryStateOfEnergy"]
+        registers_to_read = ["Battery{battery_index}StateOfEnergy"]
         values = self._read_registers(registers_to_read, unit)
-        if values["BatteryStateOfEnergy"] <= self.minsoc_storagecontrolmode:
+        if values["Battery{battery_index}StateOfEnergy"] <= minsoc_storagecontrolmode:
             # Mindest-SoC des Speichers erreicht, keine Steuerung.
             if self.last_mode != None:
                 # Steuerung aktiv, deaktivieren.
@@ -99,6 +103,11 @@ class SolaredgeBat(AbstractBat):
                 self.last_mode = None
             else:
                 return
+        """
+
+        if power_limt is None and self.last_mode is None:
+            # Kein Powerlimit gefordert, Steuerung bereits inaktiv.
+            log.debug(f"Keine Batteriesteuerung gefordert, PowerLimitMode Config = {PowerLimitModeConfig}, BatAll = {PowerLimitModeBatAll}, BatAllData = {PowerLimitModeBatAllData}.")
 
         elif power_limit is None and self.last_mode != None:
             # Kein Powerlimit mehr gefordert Steuerung deaktivieren.
