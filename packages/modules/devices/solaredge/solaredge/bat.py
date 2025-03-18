@@ -25,8 +25,8 @@ FLOAT32_UNSUPPORTED = -0xffffff00000000000000000000000000
 class SolaredgeBat(AbstractBat):
     # Define all possible registers with their data types
     REGISTERS = {
-        "Battery1StateOfEnergy": (0xf584, ModbusDataType.FLOAT_32,),  # Dezimal 62852
-        "Battery1InstantaneousPower": (0xf574, ModbusDataType.FLOAT_32,),  # Dezimal 62836
+        "Battery1StateOfEnergy": (0xe184, ModbusDataType.FLOAT_32,),  # Mirror: 0xf584
+        "Battery1InstantaneousPower": (0xe174, ModbusDataType.FLOAT_32,),  # Mirror: 0xf574
         "Battery2StateOfEnergy": (0xe284, ModbusDataType.FLOAT_32,),
         "Battery2InstantaneousPower": (0xe274, ModbusDataType.FLOAT_32,),
         "StorageControlMode": (0xe004, ModbusDataType.UINT_16,),
